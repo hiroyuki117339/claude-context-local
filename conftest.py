@@ -57,6 +57,10 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.search)
         elif "test_mcp_server" in path_str:
             item.add_marker(pytest.mark.mcp)
+        elif "test_tokenizer" in path_str or "test_bm25" in path_str or "test_hybrid" in path_str:
+            item.add_marker(pytest.mark.bm25)
+        elif "test_reranker" in path_str:
+            item.add_marker(pytest.mark.reranker)
 
 
 # Mock embedding model for testing
@@ -108,6 +112,8 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "embeddings: Embedding generation tests")
     config.addinivalue_line("markers", "chunking: Code chunking tests")
     config.addinivalue_line("markers", "search: Search functionality tests")
+    config.addinivalue_line("markers", "bm25: BM25 keyword search tests")
+    config.addinivalue_line("markers", "reranker: Cross-encoder reranker tests")
 
     # Patch AVAILABLE_MODELS with mock for integration tests
     try:

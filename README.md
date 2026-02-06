@@ -24,14 +24,14 @@
 
 [![Seeking Remote Work](https://img.shields.io/badge/🌍-Actively%20Seeking%20Remote%20Work-success?style=for-the-badge)](mailto:farhanalirazaazeemi@gmail.com)
 
-Claude Context without the cloud. Semantic code search that runs 100% locally using EmbeddingGemma. No API keys, no costs, your code never leaves your machine.
+Claude Context without the cloud. Semantic code search that runs 100% locally using Ruri v3. No API keys, no costs, your code never leaves your machine.
 
 - 🔍 **Find code by meaning, not strings**
 - 🔒 **100% local - completely private**
 - 💰 **Zero API costs - forever free**
 - ⚡ **Fewer tokens in Claude Code and fast local searches**
 
-An intelligent code search system that uses Google's EmbeddingGemma model and advanced multi-language chunking to provide semantic search capabilities across 15 file extensions and 9+ programming languages, integrated with Claude Code via MCP (Model Context Protocol).
+An intelligent code search system that uses the Ruri v3 embedding model (Japanese-optimized, 512-dim) and advanced multi-language chunking to provide semantic search capabilities across 15 file extensions and 9+ programming languages, integrated with Claude Code via MCP (Model Context Protocol).
 
 ## 🚧 Beta Release
 
@@ -98,7 +98,7 @@ The installer will:
 - Installs `uv` if missing and creates a project venv
 - Clones/updates `claude-context-local` in `~/.local/share/claude-context-local`
 - Installs Python dependencies with `uv sync`
-- Downloads the EmbeddingGemma model (~1.2–1.3 GB) if not already cached
+- Downloads the Ruri v3 embedding model (~500 MB) if not already cached
 - Tries to install `faiss-gpu` if an NVIDIA GPU is detected (interactive mode only)
 - **Preserves all your indexed projects and embeddings** across updates
 
@@ -129,7 +129,7 @@ claude-context-local/
 │   ├── python_ast_chunker.py         # Python-specific chunking (rich metadata)
 │   └── tree_sitter.py                # Tree-sitter: JS/TS/JSX/TSX/Svelte/Go/Java/Rust/C/C++/C#
 ├── embeddings/
-│   └── embedder.py                   # EmbeddingGemma; device=auto (CUDA→MPS→CPU); offline cache
+│   └── embedder.py                   # Ruri v3; device=auto (CUDA→MPS→CPU); offline cache
 ├── search/
 │   ├── indexer.py                    # FAISS index (CPU by default; GPU when available)
 │   ├── searcher.py                   # Intelligent ranking & filters
@@ -155,7 +155,7 @@ graph TD
     C --> D["ChangeDetector<br/>(Merkle DAG)"]
     C --> E["MultiLanguageChunker"]
     E --> F["Code Chunks"]
-    C --> G["CodeEmbedder<br/>(EmbeddingGemma)"]
+    C --> G["CodeEmbedder<br/>(Ruri v3)"]
     G --> H["Embeddings"]
     C --> I["CodeIndexManager<br/>(FAISS CPU/GPU)"]
     H --> I
@@ -200,39 +200,17 @@ The system uses advanced parsing to create semantically meaningful chunks across
 
 ### Model Configuration
 
-The system uses `google/embeddinggemma-300m` by default.
+The system uses `cl-nagoya/ruri-v3-130m` by default (Japanese-optimized, 512-dim).
 
 Notes:
 
-- Download size: ~1.2–2 GB on disk depending on variant and caches
+- Download size: ~500 MB on disk
+- No authentication required (non-gated model)
 - Device selection: auto (CUDA on NVIDIA, MPS on Apple Silicon, else CPU)
 - You can pre-download via installer or at first use
 - FAISS backend: CPU by default. If an NVIDIA GPU is detected, the installer
   attempts to install `faiss-gpu-cu12` (or `faiss-gpu-cu11`) and the index will
   run on GPU automatically at runtime while saving as CPU for portability.
-
-#### Hugging Face authentication (if prompted)
-
-The `google/embeddinggemma-300m` model is hosted on Hugging Face and may require
-accepting terms and/or authentication to download.
-
-1. Visit the model page and accept any terms:
-
-   - https://huggingface.co/google/embeddinggemma-300m
-
-2. Authenticate one of the following ways:
-
-   - CLI (recommended):
-
-     ```bash
-     uv run huggingface-cli login
-     # Paste your token from https://huggingface.co/settings/tokens
-     ```
-
-   - Environment variable:
-     ```bash
-     export HUGGING_FACE_HUB_TOKEN=hf_XXXXXXXXXXXXXXXXXXXXXXXX
-     ```
 
 After the first successful download, we cache the model under `~/.claude_code_search/models`
 and prefer offline loads for speed and reliability.
@@ -271,8 +249,8 @@ Data is stored in the configured storage directory:
 
 ## Performance
 
-- **Model size**: ~1.2GB (EmbeddingGemma-300m and caches)
-- **Embedding dimension**: 768 (can be reduced for speed)
+- **Model size**: ~500MB (Ruri v3 130m and caches)
+- **Embedding dimension**: 512
 - **Index types**: Flat (exact) or IVF (approximate) based on dataset size
 - **Batch processing**: Configurable batch sizes for embedding generation
 

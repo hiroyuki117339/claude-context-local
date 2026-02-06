@@ -30,10 +30,11 @@ class SearchResult:
 
 class IntelligentSearcher:
     """Intelligent code search with query optimization and context awareness."""
-    
-    def __init__(self, index_manager: CodeIndexManager, embedder: CodeEmbedder):
+
+    def __init__(self, index_manager: CodeIndexManager, embedder: CodeEmbedder, reranker=None):
         self.index_manager = index_manager
         self.embedder = embedder
+        self.reranker = reranker
         self._logger = logging.getLogger(__name__)
         
         # Query patterns for intent detection
@@ -68,27 +69,32 @@ class IntelligentSearcher:
         self,
         query: str,
         k: int = 5,
-        search_mode: str = "semantic",
+        search_mode: str = "auto",
         context_depth: int = 1,
         filters: Optional[Dict[str, Any]] = None
     ) -> List[SearchResult]:
-        """Semantic search for code understanding.
-        
-        This provides semantic search capabilities. For complete search coverage:
-        - Use this tool for conceptual/functionality queries
-        - Use Claude Code's Grep for exact term matching
-        - Combine both for comprehensive results
-        
+        """Search code using semantic, keyword, or hybrid mode.
+
         Args:
-            query: Natural language query
-            k: Number of results
-            search_mode: Currently "semantic" only
-            context_depth: Include related chunks
-            filters: Optional filters
+            query: Natural language or keyword query.
+            k: Number of results.
+            search_mode: "auto" (→hybrid), "semantic", "keyword", or "hybrid".
+            context_depth: Include related chunks (0 = none).
+            filters: Optional filters.
         """
-        
-        # Focus on semantic search - our specialty
-        return self._semantic_search(query, k, context_depth, filters)
+        # Resolve "auto" → "hybrid"
+        if search_mode == "auto":
+            search_mode = "hybrid"
+
+        if search_mode == "semantic":
+            return self._semantic_search(query, k, context_depth, filters)
+        elif search_mode == "keyword":
+            return self._keyword_search(query, k, filters)
+        elif search_mode == "hybrid":
+            return self._hybrid_search(query, k, context_depth, filters)
+        else:
+            self._logger.warning(f"Unknown search_mode '{search_mode}', falling back to hybrid")
+            return self._hybrid_search(query, k, context_depth, filters)
     
     def _semantic_search(
         self,
@@ -98,7 +104,9 @@ class IntelligentSearcher:
         filters: Optional[Dict[str, Any]] = None
     ) -> List[SearchResult]:
         """Pure semantic search implementation."""
-        
+        if k <= 0:
+            return []
+
         # Detect query intent and optimize
         optimized_query = self._optimize_query(query)
         intent_tags = self._detect_query_intent(query)
@@ -131,9 +139,189 @@ class IntelligentSearcher:
         
         # Post-process and rank results
         ranked_results = self._rank_results(search_results, query, intent_tags)
-        
+
+        # Apply cross-encoder reranking when available
+        if self.reranker is not None:
+            pool_size = min(k * 3, 50)
+            return self._rerank(query, ranked_results[:pool_size], k)
+
         return ranked_results[:k]
-    
+
+    def _keyword_search(
+        self,
+        query: str,
+        k: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[SearchResult]:
+        """Pure BM25 keyword search."""
+        raw_results = self.index_manager.search_bm25(query, k=k, filters=filters)
+
+        search_results = []
+        for chunk_id, score, metadata in raw_results:
+            result = self._create_search_result(chunk_id, score, metadata, context_depth=0)
+            search_results.append(result)
+
+        return search_results
+
+    def _hybrid_search(
+        self,
+        query: str,
+        k: int = 5,
+        context_depth: int = 1,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[SearchResult]:
+        """Hybrid search: semantic + BM25 fused via RRF."""
+        if k <= 0:
+            return []
+        fetch_k = min(k * 10, 200)
+
+        # --- Semantic arm ---
+        optimized_query = self._optimize_query(query)
+        intent_tags = self._detect_query_intent(query)
+        query_embedding = self.embedder.embed_query(optimized_query)
+        raw_semantic = self.index_manager.search(query_embedding, fetch_k, filters)
+
+        semantic_results = []
+        for chunk_id, similarity, metadata in raw_semantic:
+            result = self._create_search_result(chunk_id, similarity, metadata, context_depth)
+            semantic_results.append(result)
+
+        # --- BM25 arm ---
+        raw_bm25 = self.index_manager.search_bm25(query, k=fetch_k, filters=filters)
+
+        bm25_results = []
+        for chunk_id, score, metadata in raw_bm25:
+            result = self._create_search_result(chunk_id, score, metadata, context_depth=0)
+            bm25_results.append(result)
+
+        # --- Fuse ---
+        fused = self._reciprocal_rank_fusion(semantic_results, bm25_results)
+
+        # Post-rank with existing heuristics
+        ranked = self._rank_results(fused, query, intent_tags)
+
+        # Apply cross-encoder reranking when available
+        if self.reranker is not None:
+            pool_size = min(k * 3, 50)
+            return self._rerank(query, ranked[:pool_size], k)
+
+        return ranked[:k]
+
+    @staticmethod
+    def _reciprocal_rank_fusion(
+        semantic_results: List[SearchResult],
+        bm25_results: List[SearchResult],
+        k_rrf: int = 60,
+    ) -> List[SearchResult]:
+        """Merge two ranked lists using Reciprocal Rank Fusion.
+
+        RRF score = sum( 1 / (k + rank_i) ) across rankers.
+        Documents appearing in both lists naturally score higher.
+        """
+        scores: Dict[str, float] = {}
+        result_map: Dict[str, SearchResult] = {}
+
+        for rank, result in enumerate(semantic_results):
+            cid = result.chunk_id
+            scores[cid] = scores.get(cid, 0.0) + 1.0 / (k_rrf + rank)
+            result_map[cid] = result
+
+        for rank, result in enumerate(bm25_results):
+            cid = result.chunk_id
+            scores[cid] = scores.get(cid, 0.0) + 1.0 / (k_rrf + rank)
+            # Keep semantic result if already present (has richer context)
+            if cid not in result_map:
+                result_map[cid] = result
+
+        # Sort by RRF score descending
+        sorted_ids = sorted(scores, key=scores.__getitem__, reverse=True)
+
+        fused: List[SearchResult] = []
+        for cid in sorted_ids:
+            r = result_map[cid]
+            # Overwrite similarity_score with RRF score for downstream ranking
+            fused.append(SearchResult(
+                chunk_id=r.chunk_id,
+                similarity_score=scores[cid],
+                content_preview=r.content_preview,
+                file_path=r.file_path,
+                relative_path=r.relative_path,
+                folder_structure=r.folder_structure,
+                chunk_type=r.chunk_type,
+                name=r.name,
+                parent_name=r.parent_name,
+                start_line=r.start_line,
+                end_line=r.end_line,
+                docstring=r.docstring,
+                tags=r.tags,
+                context_info=r.context_info,
+            ))
+
+        return fused
+
+    def _rerank(
+        self,
+        query: str,
+        results: List[SearchResult],
+        k: int,
+    ) -> List[SearchResult]:
+        """Rerank results using the cross-encoder reranker.
+
+        Fetches full content from metadata_db, delegates scoring to
+        ``self.reranker``, and rebuilds SearchResult objects with the
+        reranker score.
+        """
+        if not results:
+            return []
+
+        # Build document dicts for the reranker
+        documents: List[Dict[str, Any]] = []
+        result_map: Dict[str, SearchResult] = {}
+        for r in results:
+            # Retrieve full content from the metadata database
+            content = ""
+            try:
+                entry = self.index_manager.metadata_db.get(r.chunk_id)
+                if entry:
+                    meta = entry.get("metadata", {})
+                    content = meta.get("content", "")
+            except Exception:
+                pass
+
+            if not content:
+                content = r.content_preview or ""
+
+            documents.append({
+                "chunk_id": r.chunk_id,
+                "content": content,
+                "content_preview": r.content_preview,
+            })
+            result_map[r.chunk_id] = r
+
+        reranked = self.reranker.rerank(query, documents, k)
+
+        # Rebuild SearchResult list with reranker scores
+        output: List[SearchResult] = []
+        for doc in reranked:
+            orig = result_map[doc["chunk_id"]]
+            output.append(SearchResult(
+                chunk_id=orig.chunk_id,
+                similarity_score=doc["reranker_score"],
+                content_preview=orig.content_preview,
+                file_path=orig.file_path,
+                relative_path=orig.relative_path,
+                folder_structure=orig.folder_structure,
+                chunk_type=orig.chunk_type,
+                name=orig.name,
+                parent_name=orig.parent_name,
+                start_line=orig.start_line,
+                end_line=orig.end_line,
+                docstring=orig.docstring,
+                tags=orig.tags,
+                context_info=orig.context_info,
+            ))
+        return output
+
     def _optimize_query(self, query: str) -> str:
         """Optimize query for better embedding generation."""
         # Basic query cleaning only - avoid expanding technical terms

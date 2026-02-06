@@ -12,6 +12,7 @@ import faiss
 from sqlitedict import SqliteDict
 from embeddings.embedder import EmbeddingResult
 from chunking.code_chunk import CodeChunk
+from search.bm25_index import BM25Index
 
 
 class CodeIndexManager:
@@ -33,6 +34,7 @@ class CodeIndexManager:
         self._chunk_ids = []
         self._logger = logging.getLogger(__name__)
         self._on_gpu = False
+        self._bm25_index: Optional[BM25Index] = None
         
     @property
     def index(self):
@@ -52,6 +54,24 @@ class CodeIndexManager:
             )
         return self._metadata_db
     
+    @property
+    def bm25_index(self) -> BM25Index:
+        """Lazy loading of BM25 index."""
+        if self._bm25_index is None:
+            self._bm25_index = BM25Index(str(self.storage_dir))
+        return self._bm25_index
+
+    def search_bm25(
+        self,
+        query: str,
+        k: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Tuple[str, float, Dict[str, Any]]]:
+        """BM25 keyword search across indexed chunks."""
+        bm25 = self.bm25_index
+        bm25.ensure_loaded(metadata_db=self.metadata_db, chunk_ids=self._chunk_ids)
+        return bm25.search(query, k=k, filters=filters, metadata_db=self.metadata_db)
+
     def _load_index(self):
         """Load existing FAISS index or create new one."""
         if self.index_path.exists():
@@ -125,14 +145,17 @@ class CodeIndexManager:
             }
         
         self._logger.info(f"Added {len(embedding_results)} embeddings to index")
-        
+
         # Commit metadata in a single transaction for performance
         try:
             self.metadata_db.commit()
         except Exception:
             # If commit is unavailable for some reason, continue without failing
             pass
-        
+
+        # Mark BM25 index as needing rebuild
+        self.bm25_index.mark_dirty()
+
         # Update statistics
         self._update_stats()
 
@@ -308,12 +331,17 @@ class CodeIndexManager:
         # Instead, we'll rebuild the index periodically or on demand
         
         self._logger.info(f"Removed {len(chunks_to_remove)} chunks from {file_path}")
-        
+
         # Commit removals in batch
         try:
             self.metadata_db.commit()
         except Exception:
             pass
+
+        # Mark BM25 index as needing rebuild
+        if chunks_to_remove:
+            self.bm25_index.mark_dirty()
+
         return len(chunks_to_remove)
     
     def save_index(self):
@@ -338,7 +366,14 @@ class CodeIndexManager:
         # Save chunk IDs
         with open(self.chunk_id_path, 'wb') as f:
             pickle.dump(self._chunk_ids, f)
-        
+
+        # Save BM25 index if loaded
+        if self._bm25_index is not None:
+            self._bm25_index.ensure_loaded(
+                metadata_db=self.metadata_db, chunk_ids=self._chunk_ids
+            )
+            self._bm25_index.save()
+
         self._update_stats()
     
     def _update_stats(self):
@@ -414,15 +449,25 @@ class CodeIndexManager:
             self._metadata_db.close()
             self._metadata_db = None
         
+        # Clear BM25 index
+        if self._bm25_index is not None:
+            self._bm25_index.clear()
+            self._bm25_index = None
+        else:
+            # Delete pickle even if not loaded in memory
+            bm25_pkl = self.storage_dir / "bm25.pkl"
+            if bm25_pkl.exists():
+                bm25_pkl.unlink()
+
         # Remove files
         for file_path in [self.index_path, self.metadata_path, self.chunk_id_path, self.stats_path]:
             if file_path.exists():
                 file_path.unlink()
-        
+
         # Reset in-memory state
         self._index = None
         self._chunk_ids = []
-        
+
         self._logger.info("Index cleared")
     
     def __del__(self):

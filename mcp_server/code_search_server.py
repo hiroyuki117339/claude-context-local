@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from common_utils import get_storage_dir
 from chunking.multi_language_chunker import MultiLanguageChunker
 from embeddings.embedder import CodeEmbedder
+from embeddings.reranker import CrossEncoderReranker
 from search.indexer import CodeIndexManager
 from search.searcher import IntelligentSearcher
 
@@ -90,6 +91,15 @@ class CodeSearchServer:
         return embedder
 
     @lru_cache(maxsize=1)
+    def reranker(self) -> CrossEncoderReranker:
+        """Lazy initialization of cross-encoder reranker."""
+        cache_dir = get_storage_dir() / "models"
+        cache_dir.mkdir(exist_ok=True)
+        reranker = CrossEncoderReranker(cache_dir=str(cache_dir))
+        logger.info("Cross-encoder reranker initialized")
+        return reranker
+
+    @lru_cache(maxsize=1)
     def _maybe_start_model_preload(self) -> None:
         """Preload the embedding model in the background."""
         async def _preload():
@@ -146,7 +156,8 @@ class CodeSearchServer:
         if self._current_project != project_path or self._searcher is None:
             self._searcher = IntelligentSearcher(
                 self.get_index_manager(project_path),
-                self.embedder()
+                self.embedder(),
+                reranker=self.reranker(),
             )
             logger.info(f"Searcher initialized for: {Path(self._current_project).name if self._current_project else 'unknown'}")
 
@@ -355,9 +366,12 @@ class CodeSearchServer:
 
             model_info = self.embedder().get_model_info()
 
+            reranker_info = self.reranker().get_model_info()
+
             response = {
                 "index_statistics": stats,
                 "model_information": model_info,
+                "reranker_information": reranker_info,
                 "storage_directory": str(get_storage_dir())
             }
 

@@ -23,7 +23,7 @@ class CodeEmbedder:
 
     def __init__(
         self,
-        model_name: str = "google/embeddinggemma-300m",
+        model_name: str = "cl-nagoya/ruri-v3-130m",
         cache_dir: Optional[str] = None,
         device: str = "auto"
     ):

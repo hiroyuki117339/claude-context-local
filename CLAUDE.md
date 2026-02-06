@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Claude Embedding Search is an intelligent code search system that uses Google's EmbeddingGemma model and AST-based chunking to provide semantic search capabilities for Python codebases, integrated with Claude Code via MCP (Model Context Protocol).
+Claude Embedding Search is an intelligent code search system that uses the Ruri v3 embedding model (Japanese-optimized, 512-dim) and AST-based chunking to provide semantic search capabilities for codebases, integrated with Claude Code via MCP (Model Context Protocol).
 
 ## Key Commands
 
@@ -87,9 +87,9 @@ The codebase is organized into distinct modules with clear separation of concern
   - `python_ast_chunker.py`: Breaks Python code into semantically meaningful chunks (functions, classes, modules)
   - `multi_language_chunker.py`: Tree-sitter based chunking for JavaScript, TypeScript, Go, Java, Rust, and Svelte
   - Preserves context and relationships between code elements
-- **`embeddings/`**: Embedding generation using EmbeddingGemma
+- **`embeddings/`**: Embedding generation using Ruri v3
   - `embedder.py`: Handles model loading, caching, and batch embedding generation
-  - Uses `google/embeddinggemma-300m` model with 768-dimensional embeddings
+  - Uses `cl-nagoya/ruri-v3-130m` model with 512-dimensional embeddings
 - **`search/`**: FAISS-based search and indexing
   - `indexer.py`: Manages FAISS indices, metadata storage (SQLite), and index persistence
   - `searcher.py`: Intelligent search with filtering, context-aware results, and similarity search
@@ -110,7 +110,7 @@ Data is stored in `~/.claude_code_search/` (configurable via `CODE_SEARCH_STORAG
 
 ```
 ~/.claude_code_search/
-├── models/          # Downloaded EmbeddingGemma models
+├── models/          # Downloaded embedding models
 ├── projects/        # Project-specific data
 │   └── {project_name}_{hash}/
 │       ├── project_info.json  # Project metadata
@@ -146,7 +146,7 @@ Tests are organized by component with pytest markers:
 
 ### Key Dependencies
 
-- `sentence-transformers`: EmbeddingGemma model loading and inference
+- `sentence-transformers`: Ruri v3 model loading and inference
 - `faiss-cpu`: Efficient vector similarity search
 - `fastmcp`: MCP server implementation for Claude Code integration
 - `sqlitedict`: Persistent metadata storage
@@ -156,8 +156,8 @@ Tests are organized by component with pytest markers:
 
 ### Performance Considerations
 
-- Model size: ~300MB (EmbeddingGemma-300m)
-- Embedding dimension: 768 (FAISS Flat index for small datasets, IVF for large)
+- Model size: ~500MB (Ruri v3 130m)
+- Embedding dimension: 512 (FAISS Flat index for small datasets, IVF for large)
 - Batch processing: Configurable batch sizes for memory management
 - Local processing: All embeddings computed locally, no API calls
 - Incremental indexing: Only reprocesses changed files using Merkle tree snapshots
