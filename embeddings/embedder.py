@@ -1,6 +1,7 @@
 """Code embedding wrapper using EmbeddingGemma model."""
 
 import logging
+import time
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 import numpy as np
@@ -153,7 +154,7 @@ class CodeEmbedder:
             metadata=metadata
         )
 
-    def embed_chunks(self, chunks: List[CodeChunk], batch_size: int = 32) -> List[EmbeddingResult]:
+    def embed_chunks(self, chunks: List[CodeChunk], batch_size: int = 128) -> List[EmbeddingResult]:
         """Generate embeddings for multiple chunks with batching.
 
         Args:
@@ -165,7 +166,9 @@ class CodeEmbedder:
         """
         results = []
 
-        self._logger.info(f"Generating embeddings for {len(chunks)} chunks")
+        total_batches = (len(chunks) + batch_size - 1) // batch_size
+        self._logger.info(f"[embed_chunks] {len(chunks)} chunks in {total_batches} batches (batch_size={batch_size})")
+        t_start = time.time()
 
         # Process in batches
         for i in range(0, len(chunks), batch_size):
@@ -208,10 +211,22 @@ class CodeEmbedder:
                     metadata=metadata
                 ))
 
-            if i + batch_size < len(chunks):
-                self._logger.info(f"Processed {i + batch_size}/{len(chunks)} chunks")
+            # Free MPS/CUDA intermediate tensors between batches
+            try:
+                import torch
+                if torch.backends.mps.is_available():
+                    torch.mps.empty_cache()
+                elif torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
 
-        self._logger.info("Embedding generation completed")
+            batch_num = i // batch_size + 1
+            if batch_num % 10 == 0 or batch_num == total_batches:
+                elapsed = time.time() - t_start
+                self._logger.info(f"[embed_chunks] batch {batch_num}/{total_batches} ({i + len(batch)}/{len(chunks)} chunks, {elapsed:.1f}s elapsed)")
+
+        self._logger.info(f"[embed_chunks] DONE: {len(results)} embeddings in {time.time() - t_start:.1f}s")
         return results
 
     def embed_query(self, query: str) -> np.ndarray:

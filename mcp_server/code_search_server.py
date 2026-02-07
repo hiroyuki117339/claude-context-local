@@ -61,24 +61,13 @@ class CodeSearchServer:
         return project_dir
 
     def ensure_project_indexed(self, project_path: str) -> bool:
-        """Check if project is indexed, auto-index if needed."""
+        """Check if project is indexed. Does NOT auto-index."""
         try:
             project_dir = self.get_project_storage_dir(project_path)
             index_dir = project_dir / "index"
-
-            if index_dir.exists() and (index_dir / "code.index").exists():
-                return True
-
-            project_path_obj = Path(project_path)
-            if project_path_obj == Path.cwd() and list(project_path_obj.glob("**/*.py")):
-                logger.info(f"Auto-indexing current directory: {project_path}")
-                result = self.index_directory(project_path)
-                result_data = json.loads(result)
-                return "error" not in result_data
-
-            return False
+            return index_dir.exists() and (index_dir / "code.index").exists()
         except Exception as e:
-            logger.warning(f"Failed to check/auto-index project {project_path}: {e}")
+            logger.warning(f"Failed to check project {project_path}: {e}")
             return False
 
     @lru_cache(maxsize=1)
@@ -171,7 +160,7 @@ class CodeSearchServer:
         file_pattern: str = None,
         chunk_type: str = None,
         include_context: bool = True,
-        auto_reindex: bool = True,
+        auto_reindex: bool = False,
         max_age_minutes: float = 5
     ) -> str:
         """Implementation of search_code tool."""

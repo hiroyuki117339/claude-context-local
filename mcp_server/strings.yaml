@@ -1,8 +1,8 @@
 tools:
   search_code: |
-    Search code by natural language query. Returns ranked results with file paths, line numbers, scores, and snippets.
-    search_mode: "auto" (default, hybrid+rerank), "semantic", "keyword" (BM25), "hybrid" (semantic+BM25 via RRF).
-    Auto/hybrid/semantic modes use cross-encoder reranking for higher precision.
+    Search code by natural language query. Returns ranked results with paths, lines, scores, snippets.
+    search_mode: "auto" (hybrid+rerank), "semantic", "keyword" (BM25), "hybrid" (semantic+BM25 via RRF).
+    auto_reindex is off by default; use index_directory() to update index.
     Minimal: search_code("authentication")
     Full: search_code("authentication", k=10, search_mode="hybrid", file_pattern="*.py")
 

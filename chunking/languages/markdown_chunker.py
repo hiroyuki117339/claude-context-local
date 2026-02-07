@@ -161,4 +161,46 @@ class MarkdownChunker(LanguageChunker):
                 # Insert at beginning
                 chunks.insert(0, preamble_chunk)
 
+        # Merge small consecutive sections to reduce chunk count
+        chunks = self._merge_small_sections(chunks)
+
         return chunks
+
+    # Minimum characters for a standalone chunk.  Sections smaller than
+    # this are merged with the next section.
+    _MIN_CHUNK_CHARS = 200
+
+    def _merge_small_sections(self, chunks: List[TreeSitterChunk]) -> List[TreeSitterChunk]:
+        """Merge consecutive small sections into larger chunks."""
+        if not chunks:
+            return chunks
+
+        merged = []
+        acc = None  # accumulator chunk
+
+        for chunk in chunks:
+            if acc is None:
+                acc = chunk
+                continue
+
+            # If accumulator is small, merge current chunk into it
+            if len(acc.content) < self._MIN_CHUNK_CHARS:
+                acc = TreeSitterChunk(
+                    content=acc.content + '\n\n' + chunk.content,
+                    start_line=acc.start_line,
+                    end_line=chunk.end_line,
+                    node_type=acc.node_type,
+                    language=acc.language,
+                    metadata={
+                        **acc.metadata,
+                        'merged': True,
+                    }
+                )
+            else:
+                merged.append(acc)
+                acc = chunk
+
+        if acc is not None:
+            merged.append(acc)
+
+        return merged
