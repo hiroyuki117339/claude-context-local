@@ -129,23 +129,26 @@ class IntelligentSearcher:
         )
         self._logger.info(f"Index manager returned {len(raw_results)} raw results")
         
-        # Convert to rich search results
+        # Convert to rich search results (without context to avoid wasteful FAISS calls)
         search_results = []
         for chunk_id, similarity, metadata in raw_results:
             result = self._create_search_result(
-                chunk_id, similarity, metadata, context_depth
+                chunk_id, similarity, metadata, 0
             )
             search_results.append(result)
-        
+
         # Post-process and rank results
         ranked_results = self._rank_results(search_results, query, intent_tags)
 
         # Apply cross-encoder reranking when available
         if self.reranker is not None:
             pool_size = min(k * 3, 50)
-            return self._rerank(query, ranked_results[:pool_size], k)
+            final = self._rerank(query, ranked_results[:pool_size], k)
+        else:
+            final = ranked_results[:k]
 
-        return ranked_results[:k]
+        # Enrich only the final results with context (deferred from pre-ranking)
+        return self._enrich_with_context(final, context_depth)
 
     def _keyword_search(
         self,
@@ -183,7 +186,7 @@ class IntelligentSearcher:
 
         semantic_results = []
         for chunk_id, similarity, metadata in raw_semantic:
-            result = self._create_search_result(chunk_id, similarity, metadata, context_depth)
+            result = self._create_search_result(chunk_id, similarity, metadata, 0)
             semantic_results.append(result)
 
         # --- BM25 arm ---
@@ -203,9 +206,12 @@ class IntelligentSearcher:
         # Apply cross-encoder reranking when available
         if self.reranker is not None:
             pool_size = min(k * 3, 50)
-            return self._rerank(query, ranked[:pool_size], k)
+            final = self._rerank(query, ranked[:pool_size], k)
+        else:
+            final = ranked[:k]
 
-        return ranked[:k]
+        # Enrich only the final results with context (deferred from pre-ranking)
+        return self._enrich_with_context(final, context_depth)
 
     @staticmethod
     def _reciprocal_rank_fusion(
@@ -321,6 +327,56 @@ class IntelligentSearcher:
                 context_info=orig.context_info,
             ))
         return output
+
+    def _enrich_with_context(
+        self,
+        results: List[SearchResult],
+        context_depth: int,
+    ) -> List[SearchResult]:
+        """Enrich final results with context information.
+
+        This is called *after* ranking/reranking so that expensive FAISS
+        lookups (get_similar_chunks) only happen for the final k results
+        instead of the entire candidate pool.
+        """
+        if context_depth <= 0 or not results:
+            return results
+
+        enriched: List[SearchResult] = []
+        for r in results:
+            similar_chunks = self.index_manager.get_similar_chunks(r.chunk_id, k=3)
+            context_info = {
+                'similar_chunks': [
+                    {
+                        'chunk_id': cid,
+                        'similarity': sim,
+                        'name': meta.get('name'),
+                        'chunk_type': meta.get('chunk_type'),
+                    }
+                    for cid, sim, meta in similar_chunks[:2]
+                ],
+                'file_context': {
+                    'total_chunks_in_file': self._count_chunks_in_file(r.relative_path),
+                    'folder_path': '/'.join(r.folder_structure) if r.folder_structure else None,
+                },
+            }
+            enriched.append(SearchResult(
+                chunk_id=r.chunk_id,
+                similarity_score=r.similarity_score,
+                content_preview=r.content_preview,
+                file_path=r.file_path,
+                relative_path=r.relative_path,
+                folder_structure=r.folder_structure,
+                chunk_type=r.chunk_type,
+                name=r.name,
+                parent_name=r.parent_name,
+                start_line=r.start_line,
+                end_line=r.end_line,
+                docstring=r.docstring,
+                tags=r.tags,
+                context_info=context_info,
+            ))
+        return enriched
 
     def _optimize_query(self, query: str) -> str:
         """Optimize query for better embedding generation."""
