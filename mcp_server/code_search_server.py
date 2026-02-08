@@ -491,7 +491,10 @@ class CodeSearchServer:
     def read_file(self, file_path: str, start_line: int = None, end_line: int = None) -> str:
         """Read file contents, optionally limited to a line range."""
         try:
-            path = Path(file_path).expanduser().resolve()
+            path = Path(file_path).expanduser()
+            if not path.is_absolute() and self._current_project:
+                path = Path(self._current_project) / path
+            path = path.resolve()
             if not path.is_file():
                 return json.dumps({"error": f"File not found: {file_path}"})
 
