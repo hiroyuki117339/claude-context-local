@@ -65,5 +65,6 @@ class CodeSearchMCP(FastMCP if FastMCP else object):
 
         if transport in ["sse", "streamable-http"]:
             logger.info(f"Starting HTTP server on {host}:{port}")
-        # FastMCP not support host and port
+            self.settings.host = host
+            self.settings.port = port
         return super().run(transport=transport)

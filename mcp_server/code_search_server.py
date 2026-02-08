@@ -488,6 +488,33 @@ class CodeSearchServer:
                 "error": str(e)
             })
 
+    def read_file(self, file_path: str, start_line: int = None, end_line: int = None) -> str:
+        """Read file contents, optionally limited to a line range."""
+        try:
+            path = Path(file_path).expanduser().resolve()
+            if not path.is_file():
+                return json.dumps({"error": f"File not found: {file_path}"})
+
+            with open(path, 'r', encoding='utf-8', errors='replace') as f:
+                lines = f.readlines()
+
+            total = len(lines)
+            s = (start_line or 1) - 1  # 1-indexed → 0-indexed
+            e = end_line or total
+            s = max(0, min(s, total))
+            e = max(s, min(e, total))
+            selected = lines[s:e]
+
+            return json.dumps({
+                "file": str(path),
+                "start_line": s + 1,
+                "end_line": s + len(selected),
+                "total_lines": total,
+                "content": ''.join(selected)
+            })
+        except Exception as ex:
+            return json.dumps({"error": f"Failed to read file: {str(ex)}"})
+
     def clear_index(self) -> str:
         """Implementation of clear_index tool."""
         try:

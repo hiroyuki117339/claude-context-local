@@ -25,6 +25,12 @@ tools:
 
   index_test_project: Index test project
 
+  read_file: |
+    Read file contents with optional line range.
+    Returns file path, line numbers, total lines, and content.
+    Minimal: read_file("/path/to/file.py")
+    With range: read_file("/path/to/file.py", start_line=10, end_line=50)
+
   clear_index: Clear the search index and metadata for the current project.
 
 help: |

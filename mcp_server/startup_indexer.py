@@ -3,7 +3,7 @@
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import yaml
 
@@ -16,6 +16,8 @@ DEFAULT_CONFIG_TEMPLATE = """\
 # Directories listed here will be indexed automatically when the MCP server starts.
 #
 # auto_index:
+#   watch: true                 # watch directories for changes and auto-reindex
+#   debounce_seconds: 5.0       # wait time before reindexing after a change
 #   directories:
 #     - path: "/path/to/project1"
 #     - path: "/path/to/project2"
@@ -36,6 +38,8 @@ class DirectoryConfig:
 class AutoIndexConfig:
     """Parsed auto-index configuration."""
     directories: List[DirectoryConfig] = field(default_factory=list)
+    watch: bool = False
+    debounce_seconds: float = 5.0
 
 
 def load_config(config_path: Optional[Path] = None) -> AutoIndexConfig:
@@ -80,7 +84,14 @@ def load_config(config_path: Optional[Path] = None) -> AutoIndexConfig:
         else:
             logger.warning(f"Skipping invalid directory entry in config: {entry}")
 
-    return AutoIndexConfig(directories=directories)
+    watch = bool(auto_index.get("watch", False))
+    debounce_seconds = float(auto_index.get("debounce_seconds", 5.0))
+
+    return AutoIndexConfig(
+        directories=directories,
+        watch=watch,
+        debounce_seconds=debounce_seconds,
+    )
 
 
 def generate_default_config(config_path: Optional[Path] = None) -> None:
@@ -104,17 +115,36 @@ def run_startup_indexing(
     server,
     cli_directories: Optional[List[str]] = None,
     no_auto_index: bool = False,
-) -> None:
+    watch_override: Optional[bool] = None,
+    debounce_override: Optional[float] = None,
+) -> Tuple[AutoIndexConfig, List[DirectoryConfig]]:
     """Run startup indexing based on config file and/or CLI arguments.
 
     Args:
         server: CodeSearchServer instance.
         cli_directories: Directories specified via --auto-index CLI arg.
         no_auto_index: If True, skip all auto-indexing.
+        watch_override: CLI override for watch setting (None = use config).
+        debounce_override: CLI override for debounce_seconds (None = use config).
+
+    Returns:
+        Tuple of (config, indexed_directories) where indexed_directories
+        contains only directories that were successfully indexed.
     """
+    empty_config = AutoIndexConfig()
+
     if no_auto_index:
         logger.info("Auto-indexing disabled via --no-auto-index")
-        return
+        return empty_config, []
+
+    # Load config for watch/debounce settings
+    config = load_config()
+
+    # Apply CLI overrides
+    if watch_override is not None:
+        config.watch = watch_override
+    if debounce_override is not None:
+        config.debounce_seconds = debounce_override
 
     # Determine directories to index
     if cli_directories:
@@ -122,15 +152,15 @@ def run_startup_indexing(
         directories = [DirectoryConfig(path=d) for d in cli_directories]
         logger.info(f"Using {len(directories)} directories from CLI arguments")
     else:
-        config = load_config()
         directories = config.directories
         if not directories:
             generate_default_config()
-            return
+            return config, []
         logger.info(f"Using {len(directories)} directories from config file")
 
     # Index each directory sequentially
     last_indexed = None
+    indexed_dirs: List[DirectoryConfig] = []
     for dir_config in directories:
         dir_path = Path(dir_config.path).resolve()
 
@@ -151,6 +181,7 @@ def run_startup_indexing(
             )
             logger.info(f"Auto-indexed {dir_path.name}: {result}")
             last_indexed = str(dir_path)
+            indexed_dirs.append(dir_config)
         except Exception as e:
             logger.error(f"Auto-index failed for {dir_path}: {e}")
 
@@ -160,3 +191,5 @@ def run_startup_indexing(
         server._index_manager = None
         server._searcher = None
         logger.info(f"Current project set to: {last_indexed}")
+
+    return config, indexed_dirs
