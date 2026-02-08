@@ -18,6 +18,7 @@ logging.getLogger("fastmcp").setLevel(logging.DEBUG)
 
 from mcp_server.code_search_server import CodeSearchServer
 from mcp_server.code_search_mcp import CodeSearchMCP
+from mcp_server.startup_indexer import run_startup_indexing
 
 
 def main():
@@ -42,11 +43,32 @@ def main():
         default=8000,
         help="Port for HTTP transport (default: 8000)"
     )
+    parser.add_argument(
+        "--auto-index",
+        nargs="+",
+        metavar="DIR",
+        help="Directories to auto-index at startup (overrides config file)"
+    )
+    parser.add_argument(
+        "--no-auto-index",
+        action="store_true",
+        default=False,
+        help="Disable auto-indexing even if config file exists"
+    )
 
     args = parser.parse_args()
 
-    # Create and run server
+    # Create server
     server = CodeSearchServer()
+
+    # Run startup indexing (never blocks server start)
+    run_startup_indexing(
+        server,
+        cli_directories=args.auto_index,
+        no_auto_index=args.no_auto_index,
+    )
+
+    # Create and run MCP server
     mcp_server = CodeSearchMCP(server)
     mcp_server.run(transport=args.transport, host=args.host, port=args.port)
 

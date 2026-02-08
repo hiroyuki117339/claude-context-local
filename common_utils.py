@@ -13,3 +13,8 @@ def get_storage_dir() -> Path:
     storage_dir.mkdir(parents=True, exist_ok=True)
     return storage_dir
 
+
+def get_config_path() -> Path:
+    """Get the path to the config file (config.yaml in storage dir)."""
+    return get_storage_dir() / "config.yaml"
+
